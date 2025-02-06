@@ -31,6 +31,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <queue>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
 
 #include "../include/ggml-cann.h"
 #include "../include/ggml.h"
@@ -205,6 +209,63 @@ struct ggml_cann_pool_alloc {
     ggml_cann_pool_alloc& operator=(ggml_cann_pool_alloc&&) = delete;
 };
 
+
+/**
+ * @brief This structure is mainly responsible for the task encapsulation of the Ascend operator.
+ */
+typedef struct acl_ops_task{
+    std::string name;
+    aclnnStatus (*func) (void*, uint64_t, aclOpExecutor*, aclrtStream);
+    void* workspaceAddr;
+    uint64_t workspaceSize;
+    aclOpExecutor* executor;
+    aclrtStream stream;
+    aclTensor* tensorArr[3] ; /**< Array of aclTensors for the device. */
+    aclScalar* alphaArr[1] ;
+    aclIntArray* intArray[1] ;
+ } task;
+
+
+struct task_queue{
+    std::queue<task> queue;
+    std::mutex mtx;
+    // std::condition_variable cv;
+    bool running;
+
+    ~task_queue(){
+        running = true;
+        // cv.notify_one();
+    }
+
+    void execute_queue_task(int32_t device){
+        ggml_cann_set_device(device);
+        while (true){
+            // std::unique_lock<std::mutex> lock(mtx);
+            // cv.wait(lock, [&]{return !queue.empty(); });
+            if(running) {
+                return;
+            }
+            if(queue.empty())  continue;
+            mtx.lock();
+            task tsk = queue.front();
+            ACL_CHECK(tsk.func(tsk.workspaceAddr, tsk.workspaceSize, tsk.executor, tsk.stream));
+            queue.pop();
+            mtx.unlock();
+        }
+    }
+    void submit_tsk(task tsk){
+        // std::unique_lock<std::mutex> lock(mtx);
+        mtx.lock();
+        queue.push(std::move(tsk));
+        mtx.unlock();
+        // lock.unlock();
+        // cv.notify_one();
+    }
+
+    void sync() {
+        while(!queue.empty()){}
+    }
+ };
 /**
  * @brief Context for managing CANN backend operations.
  */
@@ -212,6 +273,9 @@ struct ggml_backend_cann_context {
     int32_t device;                  /**< Device ID. */
     std::string name;                /**< Name of the device. */
     aclrtEvent copy_event = nullptr; /**< Event for managing copy operations. */
+    task_queue task_q;
+    std::thread th;
+    bool th_running;
 
     aclrtStream streams[GGML_CANN_MAX_STREAMS] = {
         {nullptr}}; /**< Array of streams for the device. */
@@ -235,6 +299,15 @@ struct ggml_backend_cann_context {
             if (streams[i] != nullptr) {
                 ACL_CHECK(aclrtDestroyStream(streams[i]));
             }
+        }
+    }
+
+    void post(task tsk){
+        task_q.submit_tsk(std::move(tsk));
+        if(!th_running) {    
+            th = std::thread(&task_queue::execute_queue_task, std::ref(task_q), device);
+            th.detach();
+            th_running = true;
         }
     }
 

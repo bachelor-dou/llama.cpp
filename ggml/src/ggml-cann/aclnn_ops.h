@@ -519,12 +519,13 @@ void ggml_cann_mul_div(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         workspaceAddr = workspace_allocator.get();
     }
 
-    aclrtStream main_stream = ctx.stream();
-    ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
-
-    ACL_CHECK(aclDestroyTensor(acl_src0));
-    ACL_CHECK(aclDestroyTensor(acl_src1));
-    ACL_CHECK(aclDestroyTensor(acl_dst));
+    task tsk = {"execute", execute, workspaceAddr, workspaceSize, executor, ctx.stream(), {acl_src0, acl_src1, acl_dst}, {nullptr}, {nullptr}};
+    ctx.task_q.submit_tsk(std::move(tsk));
+    // aclrtStream main_stream = ctx.stream();
+    // ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
+    // ACL_CHECK(aclDestroyTensor(acl_src0));
+    // ACL_CHECK(aclDestroyTensor(acl_src1));
+    // ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
 // Activation functions template.
@@ -550,12 +551,13 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         ggml_cann_pool_alloc workspace_allocator(ctx.pool(), workspaceSize);
         workspaceAddr = workspace_allocator.get();
     }
+    task tsk = {"execute", execute, workspaceAddr, workspaceSize, executor, ctx.stream(), {acl_src, acl_dst}, {nullptr}, {nullptr}};
+    ctx.task_q.submit_tsk(std::move(tsk));
+    // aclrtStream main_stream = ctx.stream();
+    // ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
 
-    aclrtStream main_stream = ctx.stream();
-    ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
-
-    ACL_CHECK(aclDestroyTensor(acl_src));
-    ACL_CHECK(aclDestroyTensor(acl_dst));
+    // ACL_CHECK(aclDestroyTensor(acl_src));
+    // ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
 // Activation functions template for const aclTensors.
@@ -582,11 +584,13 @@ void ggml_cann_activation(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
         workspaceAddr = workspace_allocator.get();
     }
 
-    aclrtStream main_stream = ctx.stream();
-    ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
+    task tsk = {"execute", execute, workspaceAddr, workspaceSize, executor, ctx.stream(), {acl_src, acl_dst}, {nullptr}, {nullptr}};
+    ctx.task_q.submit_tsk(std::move(tsk));
+    // aclrtStream main_stream = ctx.stream();
+    // ACL_CHECK(execute(workspaceAddr, workspaceSize, executor, main_stream));
 
-    ACL_CHECK(aclDestroyTensor(acl_src));
-    ACL_CHECK(aclDestroyTensor(acl_dst));
+    // ACL_CHECK(aclDestroyTensor(acl_src));
+    // ACL_CHECK(aclDestroyTensor(acl_dst));
 }
 
 #endif  // CANN_ACLNN_OPS

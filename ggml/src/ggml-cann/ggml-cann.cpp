@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
@@ -1598,6 +1599,7 @@ static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
 
     ggml_cann_set_device(cann_ctx->device);
 
+    cann_ctx->task_q.sync();
     ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
 }
 
@@ -2096,6 +2098,7 @@ ggml_backend_t ggml_backend_cann_init(int32_t device) {
         return nullptr;
     }
     ggml_cann_set_device(ctx->device);
+    // std::thread(&task_queue::execute_queue_task, std::ref(ctx->task_q), device).detach();
     ggml_backend_t cann_backend =
         new ggml_backend{/* .guid      = */ ggml_backend_cann_guid(),
                          /* .interface = */ ggml_backend_cann_interface,
