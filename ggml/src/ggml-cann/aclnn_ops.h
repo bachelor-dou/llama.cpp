@@ -49,6 +49,11 @@
 #include "acl_tensor.h"
 #include "common.h"
 
+#include <acl/acl.h>
+#include <atb/atb_infer.h>
+#include <atb/types.h>
+#include <atb/utils.h>
+#include "atb/infer_op_params.h"
 /**
  * @brief   Repeats a ggml tensor along each dimension to match the dimensions
  *          of another tensor.
@@ -1076,12 +1081,87 @@ void ggml_cann_binary_op(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
     aclTensor* acl_src0;
     aclTensor* acl_src1;
     aclTensor* acl_dst;
+    if (binary_op == aclnn_add) {
+        atb::infer::ElewiseParam addParam;
+        addParam.elewiseType = atb::infer::ElewiseParam::ElewiseType::ELEWISE_ADD;
+        atb::Operation *op = nullptr;
+        atb::Status st = atb::CreateOperation(addParam, &op);
+        atb::VariantPack pack;
+        uint32_t inTensorNum = op->GetInputNum();
+        atb::SVector<atb::TensorDesc> intensorDescs;
+        pack.inTensors.resize(inTensorNum);
+        intensorDescs.resize(inTensorNum);
 
-    // Need bcast
-    bcast_shape(src0, src1, dst, &acl_src0, &acl_src1, &acl_dst);
-    binary_op(ctx, acl_src0, acl_src1, acl_dst);
+        // 要区分数据类型
+        for (size_t i = 0; i < intensorDescs.size(); i++) {
+            if(src0->type == GGML_TYPE_F16){
+                intensorDescs.at(i).dtype = ACL_FLOAT16;
+            }else{
+                intensorDescs.at(i).dtype = ACL_FLOAT;
+            }
+            
+            intensorDescs.at(i).format = ACL_FORMAT_ND;
+            intensorDescs.at(i).shape.dimNum = GGML_MAX_DIMS;
+        }
+        // dims赋值  这里未考虑输入tensor维度广播
+        intensorDescs.at(0).shape.dims[0] = src0->ne[3];
+        intensorDescs.at(0).shape.dims[1] = src0->ne[2];
+        intensorDescs.at(0).shape.dims[2] = src0->ne[1];
+        intensorDescs.at(0).shape.dims[3] = src0->ne[0];
 
-    ggml_cann_release_resources(ctx, acl_src0, acl_src1, acl_dst);
+        intensorDescs.at(1).shape.dims[0] = src1->ne[3];
+        intensorDescs.at(1).shape.dims[1] = src1->ne[2];
+        intensorDescs.at(1).shape.dims[2] = src1->ne[1];
+        intensorDescs.at(1).shape.dims[3] = src1->ne[0];
+
+        for (size_t i = 0; i < pack.inTensors.size(); i++) {
+            pack.inTensors.at(i).desc = intensorDescs.at(i);
+            pack.inTensors.at(i).dataSize = atb::Utils::GetTensorSize(pack.inTensors.at(i));
+        }
+        
+        pack.inTensors.at(0).deviceData = src0->data;
+        pack.inTensors.at(1).deviceData = src1->data;
+
+        // 构建输出tensor
+        uint32_t outTensorNum = op->GetOutputNum();
+        atb::SVector<atb::TensorDesc> outtensorDescs;
+        outtensorDescs.resize(outTensorNum);
+        pack.outTensors.resize(outTensorNum);
+        op->InferShape(intensorDescs, outtensorDescs);
+
+        for (size_t i = 0; i < pack.outTensors.size(); i++) {
+            pack.outTensors.at(i).desc = outtensorDescs.at(i);
+            pack.outTensors.at(i).dataSize = atb::Utils::GetTensorSize(pack.outTensors.at(i));
+            pack.outTensors.at(i).deviceData = dst->data;
+        }
+
+        atb::Context *context = nullptr;
+        atb::CreateContext(&context);
+        context->SetExecuteStream(ctx.stream());
+
+        uint64_t workspaceSize = 0;
+        op->Setup(pack, workspaceSize, context);
+
+        void *workspace = nullptr;
+        if (workspaceSize != 0) {
+            aclError status = aclrtMalloc(&workspace, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+            if (status != 0) {
+                std::cout << "alloc error!";
+                exit(0);
+            }
+        }
+        op->Execute(pack, (uint8_t *)workspace, workspaceSize, context);
+        st = atb::DestroyOperation(op);      // 销毁op对象
+        st = atb::DestroyContext(context);   // 销毁context
+    
+        aclrtFree(workspace); 
+    }else{
+        // Need bcast
+        bcast_shape(src0, src1, dst, &acl_src0, &acl_src1, &acl_dst);
+        binary_op(ctx, acl_src0, acl_src1, acl_dst);
+
+        ggml_cann_release_resources(ctx, acl_src0, acl_src1, acl_dst);
+    }
 }
 
 

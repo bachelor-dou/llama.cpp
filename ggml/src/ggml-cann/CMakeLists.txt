@@ -57,14 +57,15 @@ if (CANN_INSTALL_DIR)
         nnopbase
         opapi
         acl_op_compiler
+        atb
     )
 
     file(GLOB GGML_SOURCES_CANN "*.cpp")
 
     ggml_add_backend_library(ggml-cann ${GGML_SOURCES_CANN})
     target_link_libraries(ggml-cann PRIVATE ${CANN_LIBRARIES})
-    target_include_directories(ggml-cann PRIVATE ${CANN_INCLUDE_DIRS})
-    target_link_directories(ggml-cann PRIVATE ${CANN_INSTALL_DIR}/lib64)
+    target_include_directories(ggml-cann PRIVATE ${CANN_INCLUDE_DIRS} $ENV{ATB_HOME_PATH}/include)
+    target_link_directories(ggml-cann PRIVATE ${CANN_INSTALL_DIR}/lib64 $ENV{ATB_HOME_PATH}/lib)
 
     target_compile_definitions(ggml-cann PRIVATE "-D${SOC_TYPE_COMPILE_OPTION}")
 
